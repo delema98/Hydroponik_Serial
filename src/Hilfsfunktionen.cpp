@@ -43,44 +43,26 @@ void alleLichter(bool status)
   digitalWrite(PIN_LEDHINTEN, status);
 }
 
-void UpdateAlleAktoren(Aktor feld[], int Feldgroesse)
+bool getLDRStatusHell()// 0: Dunkel 1: Hell
 {
-  for (int i = 0; i < 5; i++)
-  {
-    feld[i].UpdateAktor();
-  }
+  return digitalRead(PIN_LDR_SCHALTER);
 }
-
-void AlleAktorenAus(Aktor feld[], int Feldgroesse)
+bool UmgebungslichtZuDunkel()
 {
-  for (int i = 0; i < 5; i++)
-  {
-    feld[i].SchalteAus();
-  }
+  return !getLDRStatusHell();
 }
-
-bool UmgebungslichtZuDunkel() //--> wäre hier eine Mittelwertbildung sinnvoll?
-{
-  bool Schwelle = !digitalRead(PIN_LDR_SCHALTER);
-  return Schwelle;
-}
-
-
-
-
 float avgbufLDR[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; //Buffer bekommt alle 2min einen neuen Wert
 int anzahlAuslesenLDR = 0;
 
 bool UmgebungslichtZuDunkelMittelwert() 
 {
-  BufferFuellenLDR(digitalRead(PIN_LDR_SCHALTER)); //1: Dunkel  0: Hell
+  BufferFuellenLDR(getLDRStatusHell()); // 0: Dunkel 1: Hell
 
-  if (getMittelwertBufferLDR() > LDRSCHWELLE)
+  if (getMittelwertBufferLDR() < LDRSCHWELLE)
     return true;
   else
     return false;
 }
-
 void BufferFuellenLDR(bool akt_LDR_Wert)
 {
   if (anzahlAuslesenLDR < 10)
@@ -94,7 +76,6 @@ void BufferFuellenLDR(bool akt_LDR_Wert)
   }
   anzahlAuslesenLDR++;
 }
-
 float getMittelwertBufferLDR()
 {
   float MittelwertBuffer = 0;

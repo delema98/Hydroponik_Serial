@@ -19,7 +19,7 @@
 #include "WProgram.h"
 #endif
 
-#define ReceivedBufferLength 10  //length of the Serial CMD buffer
+#define ReceivedBufferLength 10 //length of the Serial CMD buffer
 
 class DFRobot_EC10
 {
@@ -27,19 +27,23 @@ public:
     DFRobot_EC10();
     ~DFRobot_EC10();
     // void calibration(float voltage, float temperature,char* cmd);    //calibration by Serial CMD
-	// void calibration(float voltage, float temperature);   //calibration by Serial CMD
+    // void calibration(float voltage, float temperature);   //calibration by Serial CMD
     int SerialCalibration(float voltage, float temperature);
     float calcEC(float voltage, float temperature); // voltage to EC value, with temperature compensation
-    void begin();   //initialization
+    void begin();                                   //initialization
     float getKValue();
+    void setSolution(float solution);
+    float getSolution();
+
 private:
     float _ecvalue;
     float _ecvalueRaw;
     float _kvalue;
     float _voltage;
     float _temperature;
+    float _solution;
 
-    char _cmdReceivedBuffer[ReceivedBufferLength];  //store the Serial CMD
+    char _cmdReceivedBuffer[ReceivedBufferLength]; //store the Serial CMD
     byte _cmdReceivedBufferIndex;
 
 private:

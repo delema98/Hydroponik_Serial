@@ -45,6 +45,7 @@ DFRobot_EC10::DFRobot_EC10()
   this->_cmdReceivedBufferIndex = 0;
   this->_voltage = 0.0;
   this->_temperature = 25;
+  this->_solution = 12.88;
 }
 
 DFRobot_EC10::~DFRobot_EC10()
@@ -81,13 +82,13 @@ int DFRobot_EC10::SerialCalibration(float voltage, float temperature) //Aufruf d
   calcEC(voltage, temperature); //u.a. update von ecvalueRaw
 
   //if ((this->_ecvalueRaw < 6) || (this->_ecvalueRaw > 20)) //Kalibrierflüssigkeit ist nicht innerhalb der richtigen Schwelle
-    //return 0xF1; //Fehler 1
+  //return 0xF1; //Fehler 1
 
-  static float rawECsolution = 2.77 * (1.0 + 0.0185 * (this->_temperature - 25.0));        //temperature compensation
-  float KValueTemp = RES2 * ECREF * rawECsolution / 1000.0 / this->_voltage / 10.0; //calibrate the k value
+  static float rawECsolution = _solution * (1.0 + 0.0185 * (this->_temperature - 25.0)); //temperature compensation
+  float KValueTemp = RES2 * ECREF * rawECsolution / 1000.0 / this->_voltage / 10.0;      //calibrate the k value
 
   if (KValueTemp < 0.5 || KValueTemp > 1.5) //KValue außerhalb der Grenzen
-    return 0xF2; //Fehler 2
+    return 0xF2;                            //Fehler 2
 
   this->_kvalue = KValueTemp;
   EEPROM_write(KVALUEADDR, this->_kvalue);
@@ -95,12 +96,18 @@ int DFRobot_EC10::SerialCalibration(float voltage, float temperature) //Aufruf d
   return 0x01; //Kalibrierung erfolgreich
 }
 
- float DFRobot_EC10::getKValue()
- {
-   return _kvalue;
- }
-
-
+float DFRobot_EC10::getKValue()
+{
+  return _kvalue;
+}
+void DFRobot_EC10::setSolution(float solution)
+{
+  _solution = solution;
+}
+float DFRobot_EC10::getSolution()
+{
+  return _solution;
+}
 // void DFRobot_EC10::calibration(float voltage, float temperature, char *cmd)
 // {
 //   this->_voltage = voltage;

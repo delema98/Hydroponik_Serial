@@ -1,35 +1,19 @@
 #include "mainHeader.h"
 
-/********************************************************************************
+/**************************************************************************************************
 TODO
-- Regelung aktivieren/ deaktivieren noch als Kommandos hinzufügen
-- Dosierpumpe mit Zeit ansteuern
+- Detektieren wenn lange kein Signal mehr eintrifft (-> Notlauf??)
 - Dosierpumpe maximale Laufzeit reinprogrammieren
-
-
-
-
-- Kalibrierung EC Sensor
-  - variabler Wert vorgeben / Schwellen entsprechend anpassen
-- LDR Mittelwert noch aktivieren, bis jetzt noch anderer Modus aktiv
 - nachfüllmodus checken (Sperre Dosierpumpe)
+
 - beeinflussen sich ph und ec sensor? 
 - Was wenn Messwerte Quatsch sind? (z.B. ph Wert für PH Down)
-- Düngen Alarm 
-- Überschriebene Sensorwerte löschen (Wassertemperatur (auch bei EC Messung), PH Wert, EC Wert)
-- Detektieren wenn lange kein Signal mehr eintrifft (-> Notlauf??)
-- AlleAktor - Funktionen --> Feld oder Referenz auf Feld übergeben?
-- neue Kommandos: Pumpen nur für bestimmte Zeit an  
-
 - defines als globale variablen ändern (z.b. Schwellen)
 
-- von Node Red zu sendende Werte
-  - Regelungsintervall
-  - LDRSCHWELLE
-  - DauerLuftpumpeAn
-  - evtl Faktor wenn ph Downer eine andere Konzentration hat?
+- EC Kalibrierschwellen aktuell noch deaktiviert
   
 Erledigt
+- Regelung aktivieren/ deaktivieren noch als Kommandos hinzufügen
 - Ultraschallsensor abstand setzen wenn Kiste leer 
 - Notfallmodus einrichten
 - Kalibrierung für EC Sensor integrieren (versenden von 3 Strings, in der Zeit nichts anderes)
@@ -43,26 +27,35 @@ Erledigt
   - getPhAnzahlBufferElemente //gibt die Anzahl der im Buffer gespeicherten werte zurück (0-9)
   - getPhBufferElementNr:9 //gibt Elementwert*100 an stelle 9 zurück
   - getPhBufferAvg //gibt Mittelwert des Buffers zurück *100
-
-********************************************************************************/
+- Dosierpumpe mit Zeit ansteuern
+- Lichtsteuerung Mittelwert implementieren 
+- LDR Mittelwert noch aktivieren, bis jetzt noch anderer Modus aktiv
+- Kalibrierung EC Sensor
+  - variabler Wert vorgeben
+***************************************************************************************************/
 
 //Notlauf
 bool Notlauf_flag = false; //Zentral oder über Befehl ansteuern?
 
 //Regelung PH Down
 bool Nachfuellen = 0; //wenn 1 dann muss die Regelung gesperrt werden
+bool Regelungssperre = 0;
+int RegelungsintervallInSek = 30 * 60;
 unsigned long lastTimeRegelung = 0;
 unsigned long lastTimeAktorUpdate = 0;
 int RegelungZeitSperre = 0;
 float PH_UNTERESCHWELLE = 4.5;
 float PH_OBERESCHWELLE = 7.5;
-bool Regelungssperre = 0;
+
 //Wasserspiegel
 int Wasserkiste_Hoehe = 35; //in cm //da wo der Ultraschallsensor sitzt
 
 //Licht
 bool Lichtsperre = false;
 unsigned long lastTimeLichtUpdate = 0;
+float LDRSCHWELLE = 0.3;      // 0: Dunkel 1: Hell
+int LichtRegelIntervall = 10; //in s
+
 //Abfrage Dosierpumpe
 unsigned long LetzteAbfrageDosierpumpe = 0;
 
@@ -110,14 +103,14 @@ void loop()
     bearbeiteStringBefehl();
 
   //Funktionsaufruf Regelung, z.B. alle 30min
-  if (millis() - lastTimeRegelung >= (REGELUNGINTERVALL * 1000) && !Regelungssperre)
+  if (millis() - lastTimeRegelung >= (RegelungsintervallInSek * 1000) && !Regelungssperre)
   {
     if (RegelungZeitSperre > 0)
       RegelungZeitSperre--;
     else
     {
       if (Regelung_PH(Dosierpumpe, Luftpumpe, Wasserpumpe.getStatus())) //gibt true zurück, wenn Dosierung ausgeführt wurde
-        RegelungZeitSperre = 2;
+        RegelungZeitSperre = 2;                                         //nachdem Dosierpumpe an war, 2 Regelvorgänge abwarten bevor was neues passiert
     }
     lastTimeRegelung = millis();
   }
@@ -132,11 +125,10 @@ void loop()
     lastTimeAktorUpdate = millis();
   }
 
-  //update Licht alle 10sek
-  if (millis() - lastTimeLichtUpdate >= 1000)
+  //update Licht im Intervall "LichtRegelIntervall"
+  if (millis() - lastTimeLichtUpdate >= (LichtRegelIntervall * 1000))
   {
-    //Serial.println("Lichtcheck");
-    if (UmgebungslichtZuDunkel() && !Lichtsperre)
+    if (UmgebungslichtZuDunkelMittelwert() && !Lichtsperre)
       alleLichter(true);
     else
       alleLichter(false);
@@ -185,8 +177,6 @@ void recvWithStartEndMarkers()
 
 void bearbeiteStringBefehl()
 {
-  //Serial.print(receivedChars);
-  //Serial.print(": ");
   if (strcmp(receivedChars, "Lufttemperatur") == 0)
   {
     if (millis() - lastReadTemp > 2000U) // nur neuer Wert auslesen wenn letztes lesen >2s
@@ -212,9 +202,7 @@ void bearbeiteStringBefehl()
   {
     OneWireSensors.requestTemperatures();
     float temp = OneWireSensors.getTempCByIndex(0);
-    // temp = 30.2;
     SendSerialInteger(temp * 100);
-    //Serial.println(temp*100);
   }
   else if (strcmp(receivedChars, "CO2Wert") == 0)
   {
@@ -230,10 +218,6 @@ void bearbeiteStringBefehl()
 
     float voltage = analogRead(PIN_EC) / 1024.0 * 5000;
     float ecValue = ec.calcEC(voltage, Temp_Wasser);
-
-    //Werte werden aktuell überschrieben
-
-    // ecValue = 0.3;
 
     SendSerialInteger(ecValue * 100); //in ms/cm
   }
@@ -254,15 +238,8 @@ void bearbeiteStringBefehl()
   else if (strcmp(receivedChars, "PHWert") == 0)
   {
     float phWert = getPHWert();
-    //phWert = 6.78;
     SendSerialInteger(phWert * 100);
-    //Serial.println(phWert * 100);
   }
-  // else if (strcmp(receivedChars, "HelligkeitSchwelle") == 0)
-  // {
-  //   SendSerialInteger(UmgebungslichtZuDunkel());
-  //   //Serial.println(800);
-  // }
   else if (strcmp(receivedChars, "Wasserspiegel") == 0)
   {
     float value = Kiste_Liter() * 100;
@@ -315,6 +292,12 @@ void bearbeiteStringBefehl()
     Dosierpumpe.setSperre(true);
     SendSerialInteger(0x0101);
   }
+  else if (strcmp(receivedChars, "NachfuellModusInaktiv") == 0)
+  {
+    Nachfuellen = false;
+    Dosierpumpe.setSperre(false);
+    SendSerialInteger(0x0F0F);
+  }
   else if (strcmp(receivedChars, "RegelungsperreAktiv") == 0)
   {
     Regelungssperre = true;
@@ -323,12 +306,6 @@ void bearbeiteStringBefehl()
   else if (strcmp(receivedChars, "RegelungsperreInaktiv") == 0)
   {
     Regelungssperre = false;
-    SendSerialInteger(0x0F0F);
-  }
-  else if (strcmp(receivedChars, "NachfuellModusInaktiv") == 0)
-  {
-    Nachfuellen = false;
-    Dosierpumpe.setSperre(false);
     SendSerialInteger(0x0F0F);
   }
   else if (strcmp(receivedChars, "DosierLaufzeitinS") == 0)
@@ -369,15 +346,66 @@ void bearbeiteStringBefehl()
     Dosierpumpe.setSperre(false);
     SendSerialInteger(0x0F0F);
   }
-  else if (strcmp(receivedChars, "RegelungSperreAktiv") == 0)
+  else if (strcmp(receivedChars, "getLichtBufferAvg") == 0)
   {
-    Dosierpumpe.setSperre(false);
-    SendSerialInteger(0x0F0F);
+    float avg = getMittelwertBufferLDR();
+    SendSerialInteger(avg * 100); //0...100 --> 0 = dunkel 100 = Hell
   }
-  else if (strcmp(receivedChars, "RegelungSperreInaktiv") == 0)
+  else if (strcmp(receivedChars, "getLichtSchwelle") == 0)
   {
-    Dosierpumpe.setSperre(false);
-    SendSerialInteger(0x0F0F);
+    float avg = LDRSCHWELLE;
+    SendSerialInteger(avg * 100); //0...100 --> 0 = dunkel 100 = Hell
+  }
+  else if (strcmp(receivedChars, "getLichtRegelIntervall") == 0)
+  {
+    SendSerialInteger(LichtRegelIntervall);
+  }
+  else if (strstr(receivedChars, "NeuesLichtIntervall:") != 0)
+  {
+    int zehner = receivedChars[20] - '0';
+    int einer = receivedChars[21] - '0';
+    LichtRegelIntervall = (zehner * 10 + einer);
+    SendSerialInteger(LichtRegelIntervall);
+  }
+  else if (strstr(receivedChars, "NeueLichtschwelle:") != 0)
+  {
+    int zehner = receivedChars[18] - '0';
+    int einer = receivedChars[19] - '0';
+    float neueSchwelle = ((float)(zehner * 10 + einer)) / 100;
+    LDRSCHWELLE = neueSchwelle;
+    SendSerialInteger(neueSchwelle * 100);
+  }
+  else if (strcmp(receivedChars, "getLichtStatus") == 0)
+  {
+    SendSerialInteger(digitalRead(PIN_LEDVORNE));
+  }
+  else if (strcmp(receivedChars, "getWasserpumpeStatus") == 0)
+  {
+    SendSerialInteger(Wasserpumpe.getStatus());
+  }
+  else if (strcmp(receivedChars, "getLuftpumpeStatus") == 0)
+  {
+    SendSerialInteger(Luftpumpe.getStatus());
+  }
+  else if (strstr(receivedChars, "DosierpumpeIntervallSek:") != 0)
+  {
+    int zehner = receivedChars[24] - '0';
+    int einer = receivedChars[25] - '0';
+    int Intervall = zehner * 10 + einer;
+    Dosierpumpe.SchalteFuerDauerEin(Intervall * 1000);
+    SendSerialInteger(Intervall);
+  }
+  else if (strstr(receivedChars, "PhRegelungsintervallInMin:") != 0)
+  {
+    int zehner = receivedChars[26] - '0';
+    int einer = receivedChars[27] - '0';
+    int Intervall = zehner * 10 + einer;
+    RegelungsintervallInSek = Intervall * 60;
+    SendSerialInteger(Intervall * 100);
+  }
+  else if (strcmp(receivedChars, "getPhIntervallInMin") == 0)
+  {
+    SendSerialInteger(RegelungsintervallInSek / 60);
   }
   else if (strcmp(receivedChars, "getPhBufferAvg") == 0)
   {
@@ -392,8 +420,8 @@ void bearbeiteStringBefehl()
   {
     int zehner = receivedChars[21] - '0';
     int einer = receivedChars[22] - '0';
-    int ElementPos = zehner*10 + einer;
-    if (ElementPos<0 || ElementPos>10)
+    int ElementPos = zehner * 10 + einer;
+    if (ElementPos < 0 || ElementPos > 10)
       ElementPos = 0;
     float Element = getBufferElementPos(ElementPos);
     SendSerialInteger(Element * 100);
@@ -413,6 +441,16 @@ void bearbeiteStringBefehl()
     float neueSchwelle = ((float)(zehner * 10 + einer)) / 10;
     PH_UNTERESCHWELLE = neueSchwelle;
     SendSerialInteger(neueSchwelle * 10);
+  }
+   else if (strstr(receivedChars, "PhSolution:") != 0)
+  {
+    int tausend= receivedChars[11] - '0';
+    int hundert = receivedChars[12] - '0';
+    int zehner = receivedChars[13] - '0';
+    int einer = receivedChars[14] - '0';
+    float solution = ((float)(tausend*1000 + hundert * 100 + zehner * 10 + einer)) / 100;
+    ec.setSolution(solution);
+    SendSerialInteger(ec.getSolution() * 100);
   }
   else
   {
